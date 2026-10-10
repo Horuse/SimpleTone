@@ -2,7 +2,7 @@ use atomic_float::AtomicF32;
 use nih_plug::prelude::*;
 use nih_plug_egui::{
     create_egui_editor,
-    egui::{self, Color32, ProgressBar, RichText, Vec2},
+    egui::{Color32, ProgressBar, RichText, Vec2},
     resizable_window::ResizableWindow,
     widgets, EguiState,
 };
@@ -88,7 +88,11 @@ impl Default for SimpleToneParams {
             .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" Hz")
             .with_value_to_string(formatters::v2s_f32_rounded(1))
-            .with_string_to_value(formatters::s2v_f32_rounded(1)),
+            .with_string_to_value(Arc::new(|s| {
+                s.trim_end_matches(&[' ', 'h', 'H', 'z', 'Z'])
+                    .parse()
+                    .ok()
+            })),
         }
     }
 }
@@ -145,7 +149,7 @@ impl Plugin for SimpleTone {
                     .min_size(Vec2::new(320.0, 280.0))
                     .show(egui_ctx, egui_state.as_ref(), |ui| {
                         ui.vertical_centered(|ui| {
-                            ui.heading(RichText::new("🎧 SimpleTone Test Plugin").size(18.0).strong());
+                            ui.heading(RichText::new("SimpleTone Test Plugin").size(18.0).strong());
                             ui.label(
                                 RichText::new(format!(
                                     "Platform: {} | Arch: {}",
@@ -167,7 +171,7 @@ impl Plugin for SimpleTone {
 
                         // Test Tone generator section
                         ui.group(|ui| {
-                            ui.label(RichText::new("🔊 Test Tone Generator").strong());
+                            ui.label(RichText::new("Test Tone Generator").strong());
                             ui.horizontal(|ui| {
                                 ui.label("Enable Sine:");
                                 ui.add(widgets::ParamSlider::for_param(&params.test_tone, setter));
@@ -181,7 +185,7 @@ impl Plugin for SimpleTone {
 
                         // Master section
                         ui.group(|ui| {
-                            ui.label(RichText::new("🎚 Master Output").strong());
+                            ui.label(RichText::new("Master Output").strong());
 
                             ui.label("Gain:");
                             ui.add(widgets::ParamSlider::for_param(&params.gain, setter));

@@ -6,7 +6,7 @@ Supports both **CLAP** and **VST3** formats on **macOS**, **Linux**, and **Windo
 
 ---
 
-## 🚀 Supported Platforms & Architectures
+## Supported Platforms and Architectures
 
 | Platform | Architectures | Formats | Output Bundle |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Supports both **CLAP** and **VST3** formats on **macOS**, **Linux**, and **Windo
 
 ---
 
-## 🎛 Features
+## Features
 
 1. **Test Tone Generator**:
    - Built-in sine wave generator (440 Hz default, tunable from 20 Hz to 20,000 Hz).
@@ -37,7 +37,7 @@ Supports both **CLAP** and **VST3** formats on **macOS**, **Linux**, and **Windo
 
 ---
 
-## 📂 Standard Plugin Installation Directories
+## Standard Plugin Installation Directories
 
 ### macOS
 - **CLAP**: `~/Library/Audio/Plug-Ins/CLAP/`
@@ -53,7 +53,7 @@ Supports both **CLAP** and **VST3** formats on **macOS**, **Linux**, and **Windo
 
 ---
 
-## 💻 Local Build (macOS)
+## Local Build (macOS)
 
 To build and package the plugin locally on macOS:
 
