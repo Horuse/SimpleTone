@@ -1,0 +1,206 @@
+name: Build Audio Plugin (CLAP & VST3)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================================
+  # 1. macOS (Universal Binary: x86_64 + arm64)
+  # ============================================================================
+  macos:
+    name: macOS (Universal x86_64 + ARM64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build x86_64 and arm64 targets
+        run: |
+          cargo build --package simple_tone --release --target x86_64-apple-darwin
+          cargo build --package simple_tone --release --target aarch64-apple-darwin
+
+      - name: Bundle native and universal plugins
+        run: |
+          # First bundle arm64 as template
+          cargo xtask bundle simple_tone --release --target aarch64-apple-darwin
+
+          # Create Universal Binaries using lipo
+          CLAP_BIN="target/bundled/SimpleTone.clap/Contents/MacOS/SimpleTone"
+          VST3_BIN="target/bundled/SimpleTone.vst3/Contents/MacOS/SimpleTone"
+
+          X86_LIB="target/x86_64-apple-darwin/release/libsimple_tone.dylib"
+          ARM_LIB="target/aarch64-apple-darwin/release/libsimple_tone.dylib"
+
+          lipo -create -output "$CLAP_BIN" "$X86_LIB" "$ARM_LIB"
+          lipo -create -output "$VST3_BIN" "$X86_LIB" "$ARM_LIB"
+
+          # Verify universal binaries
+          file "$CLAP_BIN"
+          file "$VST3_BIN"
+
+          # Package into zip
+          cd target/bundled
+          zip -r ../../SimpleTone-macos-universal.zip SimpleTone.clap SimpleTone.vst3
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleTone-macos-universal
+          path: SimpleTone-macos-universal.zip
+
+  # ============================================================================
+  # 2. Linux x86_64
+  # ============================================================================
+  linux-x86_64:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev libxkbcommon-dev zip
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build and Bundle
+        run: |
+          cargo xtask bundle simple_tone --release --target x86_64-unknown-linux-gnu
+          cd target/bundled
+          zip -r ../../SimpleTone-linux-x86_64.zip SimpleTone.clap SimpleTone.vst3
+
+      - name: Upload Linux x86_64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleTone-linux-x86_64
+          path: SimpleTone-linux-x86_64.zip
+
+  # ============================================================================
+  # 3. Linux ARM64 (aarch64) via Docker QEMU
+  # ============================================================================
+  linux-arm64:
+    name: Linux ARM64 (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64 emulation
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build & Bundle inside ARM64 Ubuntu Container
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/workspace -w /workspace \
+            ubuntu:22.04 bash -c "
+              set -ex
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                curl build-essential pkg-config \
+                libx11-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev libxkbcommon-dev git zip
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+              source \$HOME/.cargo/env
+              cargo xtask bundle simple_tone --release --target aarch64-unknown-linux-gnu
+              cd target/bundled
+              zip -r ../../SimpleTone-linux-arm64.zip SimpleTone.clap SimpleTone.vst3
+            "
+
+      - name: Upload Linux ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleTone-linux-arm64
+          path: SimpleTone-linux-arm64.zip
+
+  # ============================================================================
+  # 4. Windows x86_64
+  # ============================================================================
+  windows-x86_64:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build and Bundle
+        shell: bash
+        run: |
+          cargo xtask bundle simple_tone --release --target x86_64-pc-windows-msvc
+          cd target/bundled
+          7z a -tzip ../../SimpleTone-windows-x86_64.zip SimpleTone.clap SimpleTone.vst3
+
+      - name: Upload Windows x86_64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleTone-windows-x86_64
+          path: SimpleTone-windows-x86_64.zip
+
+  # ============================================================================
+  # 5. Windows ARM64 (aarch64)
+  # ============================================================================
+  windows-arm64:
+    name: Windows ARM64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC for ARM64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Build and Bundle
+        shell: bash
+        run: |
+          cargo xtask bundle simple_tone --release --target aarch64-pc-windows-msvc
+          cd target/bundled
+          7z a -tzip ../../SimpleTone-windows-arm64.zip SimpleTone.clap SimpleTone.vst3
+
+      - name: Upload Windows ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleTone-windows-arm64
+          path: SimpleTone-windows-arm64.zip
+
+  # ============================================================================
+  # 6. Create Release on Tag
+  # ============================================================================
+  release:
+    name: Publish Release
+    needs: [macos, linux-x86_64, linux-arm64, windows-x86_64, windows-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*/*.zip

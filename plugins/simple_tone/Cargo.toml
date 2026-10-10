@@ -1,0 +1,15 @@
+[package]
+name = "simple_tone"
+version = "0.1.0"
+edition = "2021"
+authors = ["AudioPlugin Developer"]
+license = "MIT OR Apache-2.0"
+description = "Cross-platform Audio Test Plugin (CLAP + VST3) with egui GUI"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug" }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug" }
+atomic_float = "0.1"
