@@ -134,13 +134,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Remove conflicting GNU link.exe
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files\Git\usr\bin\link.exe") {
+            Remove-Item "C:\Program Files\Git\usr\bin\link.exe" -Force
+          }
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
       - name: Build and Bundle
-        shell: bash
+        shell: pwsh
         run: |
           cargo xtask bundle simple_tone --release --target x86_64-pc-windows-msvc
           cd target/bundled
@@ -161,6 +168,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Remove conflicting GNU link.exe
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files\Git\usr\bin\link.exe") {
+            Remove-Item "C:\Program Files\Git\usr\bin\link.exe" -Force
+          }
+
       - name: Setup MSVC for ARM64
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -172,7 +186,7 @@ jobs:
           targets: aarch64-pc-windows-msvc
 
       - name: Build and Bundle
-        shell: bash
+        shell: pwsh
         run: |
           cargo xtask bundle simple_tone --release --target aarch64-pc-windows-msvc
           cd target/bundled
