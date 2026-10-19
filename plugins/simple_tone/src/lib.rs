@@ -167,6 +167,25 @@ impl Plugin for SimpleTone {
                         });
 
                         ui.separator();
+
+                        ui.group(|ui| {
+                            ui.label(RichText::new("Diagnostics").strong());
+                            let ppp = egui_ctx.pixels_per_point();
+                            let screen = egui_ctx.screen_rect().size();
+                            let (state_w, state_h) = egui_state.size();
+                            ui.label(format!("pixels_per_point: {ppp:.2}"));
+                            ui.label(format!(
+                                "window logical: {:.0} x {:.0}",
+                                screen.x, screen.y
+                            ));
+                            ui.label(format!(
+                                "window physical: {:.0} x {:.0}",
+                                screen.x * ppp,
+                                screen.y * ppp
+                            ));
+                            ui.label(format!("editor state size: {state_w} x {state_h}"));
+                        });
+
                         ui.add_space(4.0);
 
                         // Test Tone generator section
