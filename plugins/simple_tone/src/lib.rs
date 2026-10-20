@@ -6,6 +6,8 @@ use nih_plug_egui::{
     resizable_window::ResizableWindow,
     widgets, EguiState,
 };
+use std::any::Any;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -61,6 +63,45 @@ pub struct SimpleToneParams {
     /// Sine tone frequency in Hz
     #[id = "frequency"]
     pub frequency: FloatParam,
+}
+
+/// baseview unwraps its OpenGL setup, which panics where there is no real
+/// OpenGL driver (a Windows VM without 3D acceleration). Unwinding out of the
+/// plugin's C ABI aborts the host, so the panic is caught here and the editor
+/// stays blank instead.
+struct NoPanicEditor(Box<dyn Editor>);
+
+impl Editor for NoPanicEditor {
+    fn spawn(
+        &self,
+        parent: ParentWindowHandle,
+        context: Arc<dyn GuiContext>,
+    ) -> Box<dyn Any + Send> {
+        catch_unwind(AssertUnwindSafe(|| self.0.spawn(parent, context))).unwrap_or_else(|_| {
+            nih_error!("editor failed to open, OpenGL is likely unavailable");
+            Box::new(())
+        })
+    }
+
+    fn size(&self) -> (u32, u32) {
+        self.0.size()
+    }
+
+    fn set_scale_factor(&self, factor: f32) -> bool {
+        self.0.set_scale_factor(factor)
+    }
+
+    fn param_value_changed(&self, id: &str, normalized_value: f32) {
+        self.0.param_value_changed(id, normalized_value)
+    }
+
+    fn param_modulation_changed(&self, id: &str, modulation_offset: f32) {
+        self.0.param_modulation_changed(id, modulation_offset)
+    }
+
+    fn param_values_changed(&self) {
+        self.0.param_values_changed()
+    }
 }
 
 impl Default for SimpleTone {
@@ -163,7 +204,7 @@ impl Plugin for SimpleTone {
         let host = self.host.clone();
         let opened_at = std::time::Instant::now();
 
-        create_egui_editor(
+        let editor = create_egui_editor(
             self.params.editor_state.clone(),
             (),
             |_, _| {},
@@ -284,7 +325,8 @@ impl Plugin for SimpleTone {
                         });
                     });
             },
-        )
+        )?;
+        Some(Box::new(NoPanicEditor(editor)))
     }
 
     fn initialize(
