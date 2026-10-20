@@ -189,6 +189,8 @@ jobs:
         shell: pwsh
         run: |
           cargo xtask bundle simple_tone --release --target aarch64-pc-windows-msvc
+          # nih-plug names the folder arm_64-win; the VST3 spec and hosts use arm64-win.
+          Rename-Item target/bundled/SimpleTone.vst3/Contents/arm_64-win arm64-win
           cd target/bundled
           7z a -tzip ../../SimpleTone-windows-arm64.zip SimpleTone.clap SimpleTone.vst3
 
