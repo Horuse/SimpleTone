@@ -71,7 +71,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev libxkbcommon-dev zip
+          sudo apt-get install -y libx11-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev libxkbcommon-dev libasound2-dev zip
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -111,7 +111,7 @@ jobs:
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 curl build-essential pkg-config \
-                libx11-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev libxkbcommon-dev git zip
+                libx11-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev libxkbcommon-dev libasound2-dev git zip
               curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
               source \$HOME/.cargo/env
               cargo xtask bundle simple_tone --release --target aarch64-unknown-linux-gnu

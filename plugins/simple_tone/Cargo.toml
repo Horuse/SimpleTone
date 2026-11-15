@@ -13,3 +13,4 @@ crate-type = ["cdylib"]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug" }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug" }
 atomic_float = "0.1"
+midir = "0.11.1"

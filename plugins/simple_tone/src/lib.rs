@@ -1,15 +1,20 @@
+mod midi_out;
+mod panel;
+
 use atomic_float::AtomicF32;
+use midi_out::MidiOut;
 use nih_plug::prelude::*;
 use nih_plug_egui::{
     create_egui_editor,
-    egui::{Color32, ProgressBar, RichText, Vec2},
+    egui::{CollapsingHeader, Color32, ProgressBar, RichText, ScrollArea, Vec2},
     resizable_window::ResizableWindow,
     widgets, EguiState,
 };
+use panel::Panel;
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const PEAK_METER_DECAY_MS: f64 = 150.0;
 
@@ -41,6 +46,11 @@ pub struct SimpleTone {
     peak_meter_decay_weight: f32,
     peak_meter: Arc<AtomicF32>,
     host: Arc<HostInfo>,
+    /// The note the piano holds, see `panel::pack_preview`.
+    preview: Arc<AtomicU32>,
+    preview_phase: f32,
+    /// Opened by the editor and kept for the plugin's lifetime.
+    midi: Arc<Mutex<Option<MidiOut>>>,
 }
 
 #[derive(Params)]
@@ -63,6 +73,10 @@ pub struct SimpleToneParams {
     /// Sine tone frequency in Hz
     #[id = "frequency"]
     pub frequency: FloatParam,
+
+    /// The piano also sounds through the plugin, so a press is audible
+    #[id = "piano_sound"]
+    pub piano_sound: BoolParam,
 }
 
 /// baseview unwraps its OpenGL setup, which panics where there is no real
@@ -113,6 +127,9 @@ impl Default for SimpleTone {
             peak_meter_decay_weight: 1.0,
             peak_meter: Arc::new(AtomicF32::new(util::MINUS_INFINITY_DB)),
             host: Arc::new(HostInfo::default()),
+            preview: Arc::new(AtomicU32::new(0)),
+            preview_phase: 0.0,
+            midi: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -120,7 +137,7 @@ impl Default for SimpleTone {
 impl Default for SimpleToneParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(420, 640),
+            editor_state: EguiState::from_size(620, 760),
 
             gain: FloatParam::new(
                 "Gain",
@@ -155,6 +172,8 @@ impl Default for SimpleToneParams {
             .with_string_to_value(Arc::new(|s| {
                 s.trim_end_matches(&[' ', 'h', 'H', 'z', 'Z']).parse().ok()
             })),
+
+            piano_sound: BoolParam::new("Piano Sound", true),
         }
     }
 }
@@ -202,126 +221,162 @@ impl Plugin for SimpleTone {
         let peak_meter = self.peak_meter.clone();
         let egui_state = params.editor_state.clone();
         let host = self.host.clone();
+        let preview = self.preview.clone();
+        let midi = self.midi.clone();
         let opened_at = std::time::Instant::now();
 
         let editor = create_egui_editor(
             self.params.editor_state.clone(),
-            (),
+            Panel::default(),
             |_, _| {},
-            move |egui_ctx, setter, _state| {
+            move |egui_ctx, setter, panel| {
                 ResizableWindow::new("simple-tone-editor")
-                    .min_size(Vec2::new(380.0, 560.0))
+                    .min_size(Vec2::new(560.0, 600.0))
                     .show(egui_ctx, egui_state.as_ref(), |ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.heading(RichText::new("SimpleTone Test Plugin").size(18.0).strong());
-                            ui.label(
-                                RichText::new(format!(
-                                    "Platform: {} | Arch: {}",
-                                    std::env::consts::OS,
-                                    std::env::consts::ARCH
-                                ))
-                                .size(11.0)
-                                .color(Color32::from_rgb(140, 180, 240)),
-                            );
-                            ui.label(
-                                RichText::new("Formats: CLAP & VST3")
+                        ScrollArea::vertical().show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(
+                                    RichText::new("SimpleTone Test Plugin").size(18.0).strong(),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Platform: {} | Arch: {}",
+                                        std::env::consts::OS,
+                                        std::env::consts::ARCH
+                                    ))
                                     .size(11.0)
-                                    .color(Color32::GRAY),
-                            );
-                        });
-
-                        ui.separator();
-
-                        ui.group(|ui| {
-                            ui.label(RichText::new("Diagnostics").strong());
-                            let ppp = egui_ctx.pixels_per_point();
-                            let screen = egui_ctx.screen_rect().size();
-                            let (state_w, state_h) = egui_state.size();
-                            ui.label(format!(
-                                "format: {} | version: {}",
-                                setter.raw_context.plugin_api(),
-                                env!("CARGO_PKG_VERSION")
-                            ));
-                            ui.label(format!("pixels_per_point: {ppp:.2}"));
-                            ui.label(format!("window logical: {:.0} x {:.0}", screen.x, screen.y));
-                            ui.label(format!(
-                                "window physical: {:.0} x {:.0}",
-                                screen.x * ppp,
-                                screen.y * ppp
-                            ));
-                            ui.label(format!("editor state size: {state_w} x {state_h}"));
-                            ui.label(format!(
-                                "sample rate: {} | max buffer: {} | last buffer: {}",
-                                host.sample_rate.load(Ordering::Relaxed),
-                                host.max_buffer.load(Ordering::Relaxed),
-                                host.last_buffer.load(Ordering::Relaxed),
-                            ));
-                            ui.label(format!(
-                                "channels in/out: {}/{} | process calls: {}",
-                                host.inputs.load(Ordering::Relaxed),
-                                host.outputs.load(Ordering::Relaxed),
-                                host.process_calls.load(Ordering::Relaxed),
-                            ));
-                            ui.label(format!(
-                                "editor open: {:.1} s",
-                                opened_at.elapsed().as_secs_f32()
-                            ));
-                            for var in SESSION_VARS {
-                                let value = std::env::var(var).unwrap_or_else(|_| "-".into());
-                                ui.label(format!("{var}: {value}"));
-                            }
-                        });
-                        egui_ctx.request_repaint();
-
-                        ui.add_space(4.0);
-
-                        // Test Tone generator section
-                        ui.group(|ui| {
-                            ui.label(RichText::new("Test Tone Generator").strong());
-                            ui.horizontal(|ui| {
-                                ui.label("Enable Sine:");
-                                ui.add(widgets::ParamSlider::for_param(&params.test_tone, setter));
+                                    .color(Color32::from_rgb(140, 180, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("Formats: CLAP & VST3")
+                                        .size(11.0)
+                                        .color(Color32::GRAY),
+                                );
                             });
 
-                            ui.label("Sine Frequency:");
-                            ui.add(widgets::ParamSlider::for_param(&params.frequency, setter));
-                        });
+                            ui.separator();
 
-                        ui.add_space(4.0);
+                            CollapsingHeader::new(RichText::new("Diagnostics").strong())
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    let ppp = egui_ctx.pixels_per_point();
+                                    let screen = egui_ctx.screen_rect().size();
+                                    let (state_w, state_h) = egui_state.size();
+                                    ui.label(format!(
+                                        "format: {} | version: {}",
+                                        setter.raw_context.plugin_api(),
+                                        env!("CARGO_PKG_VERSION")
+                                    ));
+                                    ui.label(format!("pixels_per_point: {ppp:.2}"));
+                                    ui.label(format!(
+                                        "window logical: {:.0} x {:.0}",
+                                        screen.x, screen.y
+                                    ));
+                                    ui.label(format!(
+                                        "window physical: {:.0} x {:.0}",
+                                        screen.x * ppp,
+                                        screen.y * ppp
+                                    ));
+                                    ui.label(format!("editor state size: {state_w} x {state_h}"));
+                                    ui.label(format!(
+                                        "sample rate: {} | max buffer: {} | last buffer: {}",
+                                        host.sample_rate.load(Ordering::Relaxed),
+                                        host.max_buffer.load(Ordering::Relaxed),
+                                        host.last_buffer.load(Ordering::Relaxed),
+                                    ));
+                                    ui.label(format!(
+                                        "channels in/out: {}/{} | process calls: {}",
+                                        host.inputs.load(Ordering::Relaxed),
+                                        host.outputs.load(Ordering::Relaxed),
+                                        host.process_calls.load(Ordering::Relaxed),
+                                    ));
+                                    ui.label(format!(
+                                        "editor open: {:.1} s",
+                                        opened_at.elapsed().as_secs_f32()
+                                    ));
+                                    for var in SESSION_VARS {
+                                        let value =
+                                            std::env::var(var).unwrap_or_else(|_| "-".into());
+                                        ui.label(format!("{var}: {value}"));
+                                    }
+                                });
+                            egui_ctx.request_repaint();
 
-                        // Master section
-                        ui.group(|ui| {
-                            ui.label(RichText::new("Master Output").strong());
+                            ui.add_space(4.0);
 
-                            ui.label("Gain:");
-                            ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+                            CollapsingHeader::new(RichText::new("Test Tone Generator").strong())
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Enable Sine:");
+                                        ui.add(widgets::ParamSlider::for_param(
+                                            &params.test_tone,
+                                            setter,
+                                        ));
+                                    });
+
+                                    ui.label("Sine Frequency:");
+                                    ui.add(widgets::ParamSlider::for_param(
+                                        &params.frequency,
+                                        setter,
+                                    ));
+                                });
+
+                            ui.add_space(4.0);
+
+                            CollapsingHeader::new(RichText::new("Master Output").strong())
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.label("Gain:");
+                                    ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Mute:");
+                                        ui.add(widgets::ParamSlider::for_param(
+                                            &params.mute,
+                                            setter,
+                                        ));
+                                    });
+                                });
+
+                            ui.add_space(4.0);
+
+                            // Output Peak Meter
+                            let peak_val_linear = peak_meter.load(Ordering::Relaxed);
+                            let peak_db = util::gain_to_db(peak_val_linear);
+                            let peak_text = if peak_db > -60.0 {
+                                format!("{peak_db:.1} dBFS")
+                            } else {
+                                "-inf dBFS".to_string()
+                            };
+
+                            let normalized_progress = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
 
                             ui.horizontal(|ui| {
-                                ui.label("Mute:");
-                                ui.add(widgets::ParamSlider::for_param(&params.mute, setter));
+                                ui.label("Output Level:");
+                                ui.add(
+                                    ProgressBar::new(normalized_progress)
+                                        .text(peak_text)
+                                        .animate(false),
+                                );
                             });
-                        });
 
-                        ui.add_space(4.0);
+                            ui.add_space(4.0);
 
-                        // Output Peak Meter
-                        let peak_val_linear = peak_meter.load(Ordering::Relaxed);
-                        let peak_db = util::gain_to_db(peak_val_linear);
-                        let peak_text = if peak_db > -60.0 {
-                            format!("{peak_db:.1} dBFS")
-                        } else {
-                            "-inf dBFS".to_string()
-                        };
-
-                        let normalized_progress = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label("Output Level:");
-                            ui.add(
-                                ProgressBar::new(normalized_progress)
-                                    .text(peak_text)
-                                    .animate(false),
-                            );
+                            CollapsingHeader::new(RichText::new("MIDI Controller").strong())
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Piano sound:");
+                                        ui.add(widgets::ParamSlider::for_param(
+                                            &params.piano_sound,
+                                            setter,
+                                        ));
+                                    });
+                                    let mut slot = midi.lock().unwrap_or_else(|e| e.into_inner());
+                                    let out = slot.get_or_insert_with(MidiOut::open);
+                                    panel.show(ui, out, &preview);
+                                });
                         });
                     });
             },
@@ -378,6 +433,15 @@ impl Plugin for SimpleTone {
         self.host.process_calls.fetch_add(1, Ordering::Relaxed);
 
         let mut max_abs_sample: f32 = 0.0;
+        let piano = if self.params.piano_sound.value() {
+            panel::unpack_preview(self.preview.load(Ordering::Relaxed))
+        } else {
+            None
+        };
+        let piano_delta =
+            piano.map(|(n, _)| 440.0 * 2f32.powf((n as f32 - 69.0) / 12.0) / self.sample_rate);
+        let piano_level = piano.map_or(0.0, |(_, v)| 0.25 * v as f32 / 127.0);
+        let generating = test_tone_enabled || piano.is_some();
 
         for sample_idx in 0..num_samples {
             let gain = self.params.gain.smoothed.next();
@@ -391,15 +455,19 @@ impl Plugin for SimpleTone {
             } else {
                 0.0
             };
+            let tone_sample = match piano_delta {
+                Some(delta) => {
+                    let s = (self.preview_phase * std::f32::consts::TAU).sin() * piano_level;
+                    self.preview_phase = (self.preview_phase + delta).fract();
+                    tone_sample + s
+                }
+                None => tone_sample,
+            };
 
             for channel_idx in 0..num_channels {
                 let sample_ptr = &mut buffer.as_slice()[channel_idx][sample_idx];
 
-                let input_sample = if test_tone_enabled {
-                    tone_sample
-                } else {
-                    *sample_ptr
-                };
+                let input_sample = if generating { tone_sample } else { *sample_ptr };
 
                 let processed_sample = if is_muted { 0.0 } else { input_sample * gain };
 
